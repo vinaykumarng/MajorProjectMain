@@ -1,0 +1,23 @@
+{
+  "name": "agri-supply-chain",
+  "version": "1.0.0",
+  "description": "Blockchain-based Agricultural Supply Chain Traceability System",
+  "type": "module",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "node": "hardhat node",
+    "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
+    "seed:local": "hardhat run scripts/seedDemoData.ts --network localhost"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox-mocha-ethers": "^4.0.0",
+    "@types/mocha": "^10.0.8",
+    "@types/node": "^22.0.0",
+    "hardhat": "^3.8.0",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "ethers": "^6.14.0"
+  }
+}

@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Hardhat
+artifacts/
+cache/
+ignition/
+.etherscan
+
+# Environment variables
+.env
+
+# Frontend
+frontend/node_modules/
+frontend/.env*
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Runtime
+*.pdf
+*.md
