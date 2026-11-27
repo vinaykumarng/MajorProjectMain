@@ -1,0 +1,85 @@
+.registration-fields {
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.registration-assessment {
+  background: var(--clr-bg-deep);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-sm);
+  padding: clamp(14px, 3vw, 22px);
+  margin-block: 12px 18px;
+}
+
+.registration-assessment h2 {
+  font-size: 1rem;
+  margin: 0 0 8px;
+}
+
+.registration-assessment p,
+.registration-assessment li {
+  font-size: .9rem;
+  line-height: 1.5;
+}
+
+.registration-assessment p {
+  margin: 0;
+}
+
+.registration-result {
+  background: var(--clr-bg-card);
+  border: 1px solid var(--clr-border);
+  border-inline-start: 4px solid var(--clr-primary);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+
+.registration-result[data-status="typical"] {
+  border-inline-start-color: var(--clr-green);
+}
+
+.registration-result[data-status="review"],
+.registration-result[data-status="unavailable"] {
+  border-inline-start-color: var(--clr-yellow);
+}
+
+.registration-result[data-status="invalid"] {
+  border-inline-start-color: var(--clr-red);
+}
+
+.registration-result-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.registration-result-heading span {
+  font-size: .85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.registration-result p,
+.registration-result ul {
+  margin-block: 8px 0;
+}
+
+.registration-result ul {
+  padding-inline-start: 20px;
+}
+
+.registration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+@media (max-width: 480px) {
+  .registration-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

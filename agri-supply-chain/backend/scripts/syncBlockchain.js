@@ -1,235 +1,144 @@
 import { ethers } from 'ethers';
+import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import { readFileSync } from 'node:fs';
 import { connectDB } from '../db/connection.js';
 import Batch from '../models/Batch.js';
 import Transfer from '../models/Transfer.js';
 import Participant from '../models/Participant.js';
 import Event from '../models/Event.js';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const contractABI = JSON.parse(
-  readFileSync(join(__dirname, '../frontend/src/contracts/AgriculturalSupplyChain.json'), 'utf8')
-);
 
 dotenv.config();
 
-const RPC_URL = process.env.BLOCKCHAIN_RPC_URL || 'http://127.0.0.1:8545';
-const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
+const { abi } = JSON.parse(readFileSync(
+  new URL('../../frontend/src/contracts/AgriculturalSupplyChain.json', import.meta.url),
+  'utf8',
+));
+const roles = ['NONE', 'ADMIN', 'FARMER', 'PROCESSOR', 'DISTRIBUTOR', 'RETAILER'];
+const stages = ['REGISTERED', 'WITH_PROCESSOR', 'WITH_DISTRIBUTOR', 'WITH_RETAILER', 'SOLD'];
+const blockchainDate = seconds => new Date(Number(seconds) * 1000);
+const upsert = (model, filter, fields) =>
+  model.updateOne(filter, { $set: fields }, { upsert: true, runValidators: true });
 
 async function syncBlockchain() {
-  if (!CONTRACT_ADDRESS) {
-    console.error('❌ CONTRACT_ADDRESS not set in .env');
-    process.exit(1);
-  }
+  const rpcUrl = process.env.BLOCKCHAIN_RPC_URL || 'http://127.0.0.1:8545';
+  if (!process.env.CONTRACT_ADDRESS) throw new Error('CONTRACT_ADDRESS is required');
 
-  await connectDB();
-
-  console.log('🔗 Connecting to blockchain...');
-  const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const contract = new ethers.Contract(CONTRACT_ADDRESS, contractABI.abi, provider);
-
-  console.log(`📡 Contract address: ${CONTRACT_ADDRESS}`);
-
+  const address = ethers.getAddress(process.env.CONTRACT_ADDRESS);
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
   try {
-    // Get current block number
-    const currentBlock = await provider.getBlockNumber();
-    console.log(`📦 Current block: ${currentBlock}`);
-
-    // Get the last synced block from database
-    const syncState = await Event.findOne({ eventType: 'SyncState' }).sort({ timestamp: -1 });
-    let lastSyncedBlock = syncState?.data?.lastBlock || 0;
-
-    console.log(`📍 Last synced block: ${lastSyncedBlock}`);
-
-    // Sync from last synced block + 1 to current
-    const fromBlock = lastSyncedBlock + 1;
-    const toBlock = currentBlock;
-
-    if (fromBlock > toBlock) {
-      console.log('✅ Already up to date');
-      return;
+    await connectDB();
+    const contract = new ethers.Contract(address, abi, provider);
+    const chain = await provider.getNetwork();
+    const tip = await provider.getBlock('latest');
+    if (await provider.getCode(address, tip.number) === '0x') {
+      throw new Error('No deployed contract at CONTRACT_ADDRESS');
     }
 
-    console.log(`🔄 Syncing blocks ${fromBlock} to ${toBlock}...`);
-
-    // Listen for BatchRegistered events
-    const batchRegisteredFilter = contract.filters.BatchRegistered();
-    const batchRegisteredEvents = await contract.queryFilter(
-      batchRegisteredFilter,
-      fromBlock,
-      toBlock
-    );
-
-    console.log(`📋 Found ${batchRegisteredEvents.length} BatchRegistered events`);
-
-    for (const event of batchRegisteredEvents) {
-      const { batchId, farmer, productName, cropType, quantity, timestamp } = event.args;
-      const block = await event.getBlock();
-
-      // Check if batch already exists
-      const existing = await Batch.findOne({ batchId });
-
-      if (!existing) {
-        // Insert new batch
-        await Batch.create({
-          batchId,
-          productName,
-          cropType,
-          quantity: Number(quantity),
-          unit: 'kg',
-          originLocation: '',
-          harvestDate: new Date(Number(timestamp) * 1000),
-          notes: '',
-          currentCustodian: farmer,
-          currentStage: 'REGISTERED',
-          blockchainCreatedAt: new Date(Number(block.timestamp) * 1000),
-        });
-        console.log(`  ✅ Inserted batch: ${batchId}`);
+    const checkpoints = mongoose.connection.collection('blockchain_checkpoints');
+    const key = `${chain.chainId}:${address}`;
+    const checkpoint = await checkpoints.findOne({ _id: key });
+    if (!checkpoint && await checkpoints.findOne({})) {
+      throw new Error('This database indexes a different deployment. Use a fresh MongoDB database.');
+    }
+    if (checkpoint) {
+      const block = await provider.getBlock(checkpoint.blockNumber);
+      if (block?.hash !== checkpoint.blockHash) {
+        throw new Error('The indexed chain was reset or reorganized. Use a fresh MongoDB database for this local deployment.');
       }
-
-      // Log event
-      await Event.create({
-        eventType: 'BatchRegistered',
-        batchId,
-        fromAddress: farmer,
-        data: {
-          productName,
-          cropType,
-          quantity: quantity.toString(),
-        },
-        transactionHash: event.transactionHash,
-        blockNumber: event.blockNumber,
-        timestamp: new Date(Number(block.timestamp) * 1000),
-      });
     }
+    const fromBlock = checkpoint ? checkpoint.blockNumber + 1 : 0;
+    if (fromBlock > tip.number) return;
 
-    // Listen for CustodyTransferred events
-    const custodyTransferredFilter = contract.filters.CustodyTransferred();
-    const custodyTransferredEvents = await contract.queryFilter(
-      custodyTransferredFilter,
-      fromBlock,
-      toBlock
-    );
+    const registrations = await Event.find({ eventType: 'BatchRegistered', 'data.batchIdHash': { $exists: true } })
+      .select('batchId data.batchIdHash').lean();
+    const batchIds = new Map(registrations.map(event => [event.data.batchIdHash, event.batchId]));
 
-    console.log(`🔄 Found ${custodyTransferredEvents.length} CustodyTransferred events`);
+    const logs = await contract.queryFilter('*', fromBlock, tip.number);
+    logs.sort((a, b) => a.blockNumber - b.blockNumber || a.index - b.index);
+    const batches = new Map();
+    for (const log of logs) {
+      const { eventName, args, transactionHash, blockNumber } = log;
+      if (!args) continue;
 
-    for (const event of custodyTransferredEvents) {
-      const { batchId, from, to, fromRole, toRole, newStage, timestamp } = event.args;
-      const block = await event.getBlock();
-
-      // Insert transfer record
-      await Transfer.create({
-        batchId,
-        fromAddress: from,
-        toAddress: to,
-        fromRole,
-        toRole,
-        newStage,
-        notes: '',
-        blockchainTimestamp: new Date(Number(timestamp) * 1000),
-        transactionHash: event.transactionHash,
-        blockNumber: event.blockNumber,
-      });
-
-      // Update batch current custodian and stage
-      await Batch.findOneAndUpdate(
-        { batchId },
-        {
-          currentCustodian: to,
-          currentStage: newStage,
+      const event = { eventType: eventName, transactionHash, blockNumber,
+        timestamp: blockchainDate(args.timestamp), data: {} };
+      if (eventName === 'BatchRegistered') {
+        const tx = await log.getTransaction();
+        const registration = contract.interface.parseTransaction(tx);
+        if (registration?.name !== 'registerBatch' ||
+            ethers.id(registration.args.batchId) !== args.batchId.hash) {
+          throw new Error(`Could not recover batch ID for ${transactionHash}`);
         }
-      );
-
-      console.log(`  ✅ Transferred batch ${batchId} from ${from} to ${to}`);
-
-      // Log event
-      await Event.create({
-        eventType: 'CustodyTransferred',
-        batchId,
-        fromAddress: from,
-        toAddress: to,
-        data: {
-          fromRole,
-          toRole,
-          newStage,
-        },
-        transactionHash: event.transactionHash,
-        blockNumber: event.blockNumber,
-        timestamp: new Date(Number(block.timestamp) * 1000),
-      });
-    }
-
-    // Listen for ParticipantAuthorized events
-    const participantAuthorizedFilter = contract.filters.ParticipantAuthorized();
-    const participantAuthorizedEvents = await contract.queryFilter(
-      participantAuthorizedFilter,
-      fromBlock,
-      toBlock
-    );
-
-    console.log(`👑 Found ${participantAuthorizedEvents.length} ParticipantAuthorized events`);
-
-    for (const event of participantAuthorizedEvents) {
-      const { participant, role, timestamp } = event.args;
-      const block = await event.getBlock();
-
-      // Check if participant exists
-      const existing = await Participant.findOne({ address: participant });
-
-      if (!existing) {
-        // Insert new participant
-        await Participant.create({
-          address: participant,
-          role,
-          isAuthorized: true,
-          authorizedAt: new Date(Number(timestamp) * 1000),
+        const batchId = registration.args.batchId;
+        batchIds.set(args.batchId.hash, batchId);
+        const batch = await contract.getBatch(batchId, { blockTag: tip.number });
+        batches.set(batchId, batch);
+        await upsert(Batch, { batchId }, {
+          batchId,
+          productName: batch.productName,
+          cropType: batch.cropType,
+          quantity: Number(batch.quantity),
+          unit: batch.unit,
+          originLocation: batch.originLocation,
+          harvestDate: blockchainDate(batch.harvestDate),
+          notes: batch.notes,
+          currentCustodian: batch.currentCustodian,
+          currentStage: stages[Number(batch.currentStage)],
+          blockchainCreatedAt: blockchainDate(batch.createdAt),
         });
-        console.log(`  ✅ Authorized participant: ${participant} as ${role}`);
+        event.batchId = batchId;
+        event.fromAddress = args.farmer;
+        event.data = {
+          batchIdHash: args.batchId.hash,
+          productName: batch.productName,
+          cropType: batch.cropType,
+          quantity: batch.quantity.toString(),
+        };
+      } else if (eventName === 'CustodyTransferred') {
+        const batchId = batchIds.get(args.batchId.hash);
+        if (!batchId) throw new Error(`Missing registration for transfer ${transactionHash}`);
+        const batch = batches.get(batchId) ?? await contract.getBatch(batchId, { blockTag: tip.number });
+        batches.set(batchId, batch);
+        const { from, to } = args;
+        const fromRole = roles[Number(args.fromRole)];
+        const toRole = roles[Number(args.toRole)];
+        const newStage = stages[Number(args.newStage)];
+        await upsert(Transfer, { transactionHash }, {
+          batchId, fromAddress: from, toAddress: to, fromRole, toRole, newStage,
+          blockchainTimestamp: event.timestamp, transactionHash, blockNumber,
+        });
+        await Batch.updateOne({ batchId }, {
+          currentCustodian: batch.currentCustodian,
+          currentStage: stages[Number(batch.currentStage)],
+        });
+        Object.assign(event, { batchId, fromAddress: from, toAddress: to, data: { fromRole, toRole, newStage } });
+      } else if (eventName === 'ParticipantAuthorized') {
+        const role = roles[Number(args.role)];
+        const address = args.participant.toLowerCase();
+        await upsert(Participant, { address }, { address, role, isAuthorized: true, authorizedAt: event.timestamp });
+        Object.assign(event, { fromAddress: address, role });
+      } else if (eventName === 'ParticipantRevoked') {
+        const address = args.participant.toLowerCase();
+        await Participant.updateOne({ address }, { isAuthorized: false });
+        event.fromAddress = address;
       } else {
-        // Update existing participant
-        await Participant.findOneAndUpdate(
-          { address: participant },
-          {
-            role,
-            isAuthorized: true,
-            authorizedAt: new Date(Number(timestamp) * 1000),
-          }
-        );
-        console.log(`  ✅ Updated participant: ${participant} as ${role}`);
+        continue;
       }
-
-      // Log event
-      await Event.create({
-        eventType: 'ParticipantAuthorized',
-        fromAddress: participant,
-        role,
-        data: {},
-        transactionHash: event.transactionHash,
-        blockNumber: event.blockNumber,
-        timestamp: new Date(Number(block.timestamp) * 1000),
-      });
+      await upsert(Event, { transactionHash }, event);
     }
 
-    // Update sync state
-    await Event.create({
-      eventType: 'SyncState',
-      data: { lastBlock: currentBlock },
-      timestamp: new Date(),
-    });
-
-    console.log(`✅ Sync complete. Last synced block: ${currentBlock}`);
-
-  } catch (error) {
-    console.error('❌ Error syncing blockchain:', error.message);
-    process.exit(1);
+    await checkpoints.updateOne({ _id: key }, {
+      $set: { blockNumber: tip.number, blockHash: tip.hash },
+    }, { upsert: true });
+    console.log(`Synced ${logs.length} logs through block ${tip.number}`);
   } finally {
-    await mongoose.connection.close();
+    provider.destroy();
+    await mongoose.disconnect();
   }
 }
 
-syncBlockchain();
+syncBlockchain().catch(error => {
+  console.error('Error syncing blockchain:', error.message);
+  process.exitCode = 1;
+});

@@ -25,7 +25,6 @@ const participantSchema = new mongoose.Schema({
 });
 
 // Index for faster queries
-participantSchema.index({ address: 1 });
 participantSchema.index({ role: 1 });
 participantSchema.index({ isAuthorized: 1 });
 

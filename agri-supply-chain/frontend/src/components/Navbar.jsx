@@ -1,8 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { displayName } from '../utils/formatters';
-import { HARDHAT_CHAIN_ID } from '../utils/roles';
 
-export default function Navbar({ account, isConnected, isWrongNetwork, connecting, onConnect, chainId }) {
+export default function Navbar({ account, isConnected, isWrongNetwork, connecting, onConnect, chainId, canManage }) {
   const networkStatus = () => {
     if (!isConnected) return { cls: 'disconnected', label: 'Not Connected' };
     if (isWrongNetwork) return { cls: 'wrong-network', label: `Wrong Network (${chainId})` };
@@ -19,11 +18,12 @@ export default function Navbar({ account, isConnected, isWrongNetwork, connectin
       </NavLink>
 
       <ul className="navbar-nav">
+        <li><NavLink to="/participant-account">Participant account</NavLink></li>
         <li><NavLink to="/" end>🏠 Home</NavLink></li>
         <li><NavLink to="/register">📝 Register</NavLink></li>
         <li><NavLink to="/transfer">🔄 Transfer</NavLink></li>
         <li><NavLink to="/trace">🔍 Trace</NavLink></li>
-        <li><NavLink to="/admin">⚙️ Admin</NavLink></li>
+        {canManage && <li><NavLink to="/admin">⚙️ Admin</NavLink></li>}
         <li><NavLink to="/demo">🚀 Demo</NavLink></li>
       </ul>
 

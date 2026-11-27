@@ -1,0 +1,52 @@
+.customer-trace .field-value,
+.customer-trace .timeline-meta,
+.customer-trace .alert {
+  overflow-wrap: anywhere;
+}
+
+.trace-verification {
+  border-inline-start: 3px solid var(--clr-green);
+  background: var(--clr-green-dim);
+  padding: 10px 12px;
+  font-size: .9rem;
+}
+
+.trace-share {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.trace-share img {
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-sm);
+}
+
+.trace-share-note {
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--clr-yellow-dim);
+}
+
+.trace-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .trace-share,
+  .customer-trace .batch-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-trace .search-bar {
+    flex-wrap: wrap;
+  }
+
+  .customer-trace .search-bar .form-input {
+    width: 100%;
+    min-width: 0;
+  }
+}

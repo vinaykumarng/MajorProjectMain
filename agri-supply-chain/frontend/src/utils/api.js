@@ -1,9 +1,19 @@
-const API_BASE_URL = 'http://localhost:3001/api';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 /**
  * API client for backend communication
  */
 export const api = {
+  getPublicTrace: async (batchId, signal) => {
+    const query = new URLSearchParams({ batchId });
+    const response = await fetch(`${API_BASE_URL}/public/trace?${query}`, { signal });
+    if (!response.headers.get('content-type')?.includes('application/json')) {
+      throw new Error('The trace service is temporarily unavailable.');
+    }
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Failed to trace batch.');
+    return data;
+  },
   // Batches
   getBatches: async (params = {}) => {
     const queryString = new URLSearchParams(params).toString();
@@ -21,6 +31,31 @@ export const api = {
   getBatchHistory: async (batchId) => {
     const response = await fetch(`${API_BASE_URL}/batches/${batchId}/history`);
     if (!response.ok) throw new Error('Failed to fetch batch history');
+    return response.json();
+  },
+
+  getBatchRisk: async ({ batchId, registeredAt, transferCount, signal }) => {
+    const query = new URLSearchParams({ registeredAt, transferCount });
+    const response = await fetch(`${API_BASE_URL}/batches/${encodeURIComponent(batchId)}/risk?${query}`, { signal });
+    if (response.status === 404 || response.status === 409) {
+      return { message: 'Run blockchain sync and trace the batch again to see its assessment.' };
+    }
+    if (!response.ok) throw new Error('Failed to fetch batch risk');
+    return response.json();
+  },
+
+  assessRegistration: async (draft, signal) => {
+    const response = await fetch(`${API_BASE_URL}/batches/registration-assessment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(draft),
+      signal,
+    });
+    if (response.status === 400) {
+      const { error } = await response.json();
+      return { status: 'invalid', message: error };
+    }
+    if (!response.ok) throw new Error('Assessment unavailable');
     return response.json();
   },
 

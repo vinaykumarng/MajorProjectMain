@@ -35,7 +35,7 @@ const STEPS = [
   },
 ];
 
-export default function DemoLoader({ account, isConnected, onConnect }) {
+export default function DemoLoader({ account, isConnected, onConnect, canRegister, canManage }) {
   const copy = async (text) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -81,9 +81,11 @@ export default function DemoLoader({ account, isConnected, onConnect }) {
           <Link to="/trace" className="btn btn-outline">
             🔍 Trace RICE-2026-001
           </Link>
-          <Link to="/admin" className="btn btn-outline">
-            ⚙️ Open Admin Panel
-          </Link>
+          {canManage && (
+            <Link to="/admin" className="btn btn-outline">
+              ⚙️ Open Admin Panel
+            </Link>
+          )}
         </div>
       </div>
 
@@ -176,14 +178,14 @@ export default function DemoLoader({ account, isConnected, onConnect }) {
             Switch MetaMask to <strong>Admin</strong> ({shortAddress(DEMO_ACCOUNTS.admin.address)}).
           </li>
           <li>
-            Open <Link to="/admin">Admin Panel</Link> → Authorize Participant →
+            Open {canManage ? <Link to="/admin">Admin Panel</Link> : "Admin Panel"} → Authorize Participant →
             paste the address → choose <strong>Farmer</strong> (or Processor / Distributor / Retailer) → submit.
           </li>
           <li>
             Switch MetaMask to the <strong>new</strong> wallet.
           </li>
           <li>
-            Open <Link to="/register">Register Batch</Link> and create a batch
+            Open {canRegister ? <Link to="/register">Register Batch</Link> : "Register Batch"} and create a batch
             (only works if that wallet was authorized as Farmer).
           </li>
         </ol>

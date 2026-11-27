@@ -52,6 +52,5 @@ transferSchema.index({ batchId: 1 });
 transferSchema.index({ fromAddress: 1 });
 transferSchema.index({ toAddress: 1 });
 transferSchema.index({ timestamp: -1 });
-transferSchema.index({ transactionHash: 1 });
 
 export default mongoose.model('Transfer', transferSchema);

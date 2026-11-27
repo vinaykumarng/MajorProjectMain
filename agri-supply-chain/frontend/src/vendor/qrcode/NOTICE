@@ -1,0 +1,1 @@
+Adapted as ES modules from the QRCode vendor directory bundled with qrcode-terminal. The encoder originated in Kazuhiko Arase’s MIT-licensed QRCode for JavaScript.

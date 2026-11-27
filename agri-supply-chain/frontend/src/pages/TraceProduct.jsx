@@ -1,58 +1,54 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import TraceShare from '../components/TraceShare.jsx';
+import { api } from '../utils/api.js';
+import './TraceProduct.css';
 import Timeline from '../components/Timeline.jsx';
+import BatchRisk from '../components/BatchRisk.jsx';
+import { BatchReviewTrail } from '../components/AnomalyReviews.jsx';
 import { formatTimestamp, formatQuantity, displayNameWithAddress } from '../utils/formatters.js';
 import { RoleNames, RoleIcons, RoleBadgeClass, StageBadgeClass, StageNames } from '../utils/roles.js';
 
-export default function TraceProduct({ contract, provider }) {
-  const [batchId, setBatchId] = useState('');
-  const [batch, setBatch] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [searched, setSearched] = useState(false);
+export default function TraceProduct({ account, isWrongNetwork }) {
+  const [params, setParams] = useSearchParams();
+  const requestedId = params.get('batch') || '';
+  const [draft, setDraft] = useState(null);
+  const [result, setResult] = useState(null);
+  const [attempt, setAttempt] = useState(0);
+  const currentResult = result?.batchId === requestedId && result?.attempt === attempt ? result : null;
+  const batch = currentResult?.trace?.batch;
+  const history = currentResult?.trace?.history || [];
+  const error = currentResult?.error;
+  const loading = Boolean(requestedId && !currentResult);
+  const batchId = draft?.requestedId === requestedId ? draft.value : requestedId;
 
-  // Read-only — uses provider, no wallet needed
-  const readContract = contract; // already read-only with provider if no signer
+  useEffect(() => {
+    if (!requestedId) return;
+    const controller = new AbortController();
+    api.getPublicTrace(requestedId, controller.signal)
+      .then(trace => {
+        if (!controller.signal.aborted) setResult({ batchId: requestedId, attempt, trace });
+      })
+      .catch(err => {
+        if (!controller.signal.aborted) setResult({ batchId: requestedId, attempt, error: err.message });
+      });
+    return () => controller.abort();
+  }, [requestedId, attempt]);
 
-  const handleSearch = async (e) => {
+  function handleSearch(e) {
     e.preventDefault();
-    if (!readContract) {
-      setError('Contract not available. Make sure the Hardhat node is running and the contract is deployed.');
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setBatch(null);
-    setHistory([]);
-    setSearched(true);
-
-    try {
-      const exists = await readContract.batchExistsCheck(batchId.trim());
-      if (!exists) {
-        setError(`Batch "${batchId.trim()}" not found on-chain. Check the Batch ID and try again.`);
-        setLoading(false);
-        return;
-      }
-
-      const [batchData, historyData] = await Promise.all([
-        readContract.getBatch(batchId.trim()),
-        readContract.getBatchHistory(batchId.trim()),
-      ]);
-
-      setBatch(batchData);
-      setHistory(historyData);
-    } catch (err) {
-      setError(err.reason || err.message || 'Failed to fetch batch data');
-    } finally {
-      setLoading(false);
-    }
-  };
+    const id = batchId.trim();
+    if (!id) return;
+    setDraft(null);
+    setParams({ batch: id });
+    setAttempt(previous => previous + 1);
+  }
 
   const stageNum = batch ? Number(batch.currentStage) : 0;
   const custodianRole = batch ? (history.length > 0 ? Number(history[history.length - 1].toRole) : 2) : 0;
 
   return (
-    <div className="animate-in">
+    <div className="animate-in customer-trace">
       <div className="page-header">
         <h1 className="page-title">🔍 Trace Product</h1>
         <p className="page-subtitle">
@@ -70,19 +66,13 @@ export default function TraceProduct({ contract, provider }) {
               className="form-input"
               placeholder="e.g., RICE-2026-001"
               value={batchId}
-              onChange={(e) => setBatchId(e.target.value)}
+              onChange={(e) => setDraft({ requestedId, value: e.target.value })}
               required
             />
             <button type="submit" className="btn btn-primary" disabled={loading || !batchId.trim()}>
               {loading ? <span className="spinner" /> : '🔍 Trace'}
             </button>
           </div>
-          {!contract && (
-            <div className="alert alert-warning mt-1">
-              <span className="alert-icon">⚠️</span>
-              Contract not connected. Make sure the Hardhat node is running and the app is configured with a deployed contract address.
-            </div>
-          )}
         </form>
       </div>
 
@@ -94,16 +84,7 @@ export default function TraceProduct({ contract, provider }) {
         </div>
       )}
 
-      {/* Not found */}
-      {searched && !loading && !error && !batch && (
-        <div className="card">
-          <div className="empty-state">
-            <span className="empty-icon">📦</span>
-            <span className="empty-title">Batch Not Found</span>
-            <span className="empty-text">No batch with that ID exists on-chain.</span>
-          </div>
-        </div>
-      )}
+      {loading && <p role="status" className="mb-2">Reading batch from the blockchain…</p>}
 
       {/* Results */}
       {batch && (
@@ -119,6 +100,10 @@ export default function TraceProduct({ contract, provider }) {
                 </span>
               </span>
             </div>
+
+            <p className="trace-verification mb-2">
+              <strong>Batch record found on-chain.</strong> Match the batch ID below with the package label.
+            </p>
 
             <div className="batch-detail-grid">
               <div className="batch-field">
@@ -166,6 +151,12 @@ export default function TraceProduct({ contract, provider }) {
               </div>
             )}
           </div>
+
+          {stageNum === 3 && !isWrongNetwork && account?.toLowerCase() === batch.currentCustodian.toLowerCase() && (
+            <TraceShare key={batch.batchId} batchId={batch.batchId} />
+          )}
+          <BatchRisk assessment={currentResult.trace.assessment} />
+          <BatchReviewTrail key={batch.batchId} trace={currentResult.trace} />
 
           {/* Provenance timeline */}
           <div className="card">

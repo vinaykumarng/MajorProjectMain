@@ -42,6 +42,5 @@ const eventSchema = new mongoose.Schema({
 eventSchema.index({ eventType: 1 });
 eventSchema.index({ batchId: 1 });
 eventSchema.index({ timestamp: -1 });
-eventSchema.index({ transactionHash: 1 });
 
 export default mongoose.model('Event', eventSchema);

@@ -1,6 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { tracePath } from '../utils/traceShare.js';
 import TxStatus from '../components/TxStatus.jsx';
-import { getDemoParticipants, displayName } from '../utils/formatters.js';
+import { displayName, shortAddress } from '../utils/formatters.js';
+import { api } from '../utils/api.js';
+import { onboardingRequest } from '../utils/onboarding.js';
+import { Role, RoleNames } from '../utils/roles.js';
+
+const nextRoles = {
+  [Role.FARMER]: Role.PROCESSOR,
+  [Role.PROCESSOR]: Role.DISTRIBUTOR,
+  [Role.DISTRIBUTOR]: Role.RETAILER,
+};
 
 export default function TransferCustody({ contract, account, isConnected, isWrongNetwork }) {
   const [form, setForm] = useState({ batchId: '', toAddress: '', notes: '' });
@@ -9,9 +20,35 @@ export default function TransferCustody({ contract, account, isConnected, isWron
   const [txError, setTxError] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const recipients = getDemoParticipants().filter(
-    (p) => !account || p.address.toLowerCase() !== account.toLowerCase()
-  );
+  const [directory, setDirectory] = useState(null);
+  const [manual, setManual] = useState(false);
+  const [custody, setCustody] = useState(null);
+
+  useEffect(() => {
+    if (!contract || !account || isWrongNetwork) return;
+    const controller = new AbortController();
+    async function loadDirectory() {
+      try {
+        const participant = await contract.getParticipant(account);
+        const role = participant.isAuthorized ? nextRoles[Number(participant.role)] : undefined;
+        const recipients = role ? await onboardingRequest('/directory?role=' + role, { signal: controller.signal }) : [];
+        if (!controller.signal.aborted) setDirectory({ role, recipients });
+      } catch {
+        if (!controller.signal.aborted) setDirectory({ unavailable: true });
+      }
+    }
+    loadDirectory();
+    return () => controller.abort();
+  }, [account, contract, isWrongNetwork]);
+
+  useEffect(() => {
+    if (!account || isWrongNetwork) return;
+    let cancelled = false;
+    api.getBatches({ custodian: account, limit: 100 })
+      .then(batches => { if (!cancelled) setCustody({ batches }); })
+      .catch(() => { if (!cancelled) setCustody({ unavailable: true }); });
+    return () => { cancelled = true; };
+  }, [account, isWrongNetwork, txStatus]);
 
   const handleChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -101,6 +138,33 @@ export default function TransferCustody({ contract, account, isConnected, isWron
         </p>
       </div>
 
+      <section className="card mb-2">
+        <h2 className="card-title">Batches in your custody</h2>
+        <p className="text-sm text-muted">This list reflects the last blockchain sync. You can also enter a batch ID below.</p>
+        {!custody && <p>Loading batches…</p>}
+        {custody?.unavailable && <p>The indexed batch list is unavailable.</p>}
+        {custody?.batches?.length === 0 && <p>No batches are currently indexed for this wallet.</p>}
+        {custody?.batches?.length > 0 && (
+          <ul className="mt-1">
+            {custody.batches.map(batch => (
+              <li key={batch.batchId}>
+                {batch.currentStage === 'WITH_RETAILER' && (
+                  <Link className="btn btn-outline mt-1" to={tracePath(batch.batchId)}>
+                    Share trace for {batch.batchId}
+                  </Link>
+                )}
+                {batch.currentStage !== 'WITH_RETAILER' && (
+                <button type="button" className="btn btn-outline mt-1" disabled={loading}
+                  onClick={() => setForm(prev => ({ ...prev, batchId: batch.batchId }))}>
+                  {batch.batchId} · {batch.productName}
+                </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <div className="card">
         <div className="card-title"><span className="icon">📦</span> Transfer Form</div>
 
@@ -120,25 +184,27 @@ export default function TransferCustody({ contract, account, isConnected, isWron
 
           <div className="form-group">
             <label className="form-label" htmlFor="tf-toAddress">Recipient *</label>
-            <select
-              id="tf-toAddress"
-              name="toAddress"
-              className="form-input"
-              value={form.toAddress}
-              onChange={handleChange}
-              required
-            >
-              <option value="">Select next participant…</option>
-              {recipients.map((p) => (
-                <option key={p.address} value={p.address}>
-                  {p.icon} {p.label} — {p.role}
-                </option>
-              ))}
-            </select>
-            <span className="text-xs text-muted">
-              Demo accounts by name (still real wallet addresses under the hood).
-              {form.toAddress ? ` Selected: ${displayName(form.toAddress)}` : ''}
-            </span>
+            {manual ? (
+              <input id="tf-toAddress" name="toAddress" className="form-input" placeholder="0x…"
+                value={form.toAddress} onChange={handleChange} required />
+            ) : (
+              <select id="tf-toAddress" name="toAddress" className="form-select"
+                value={form.toAddress} onChange={handleChange} required>
+                <option value="">{directory?.role ? 'Select an authorized ' + RoleNames[directory.role] : 'Select a recipient'}</option>
+                {directory?.recipients?.map(participant => (
+                  <option key={participant.address} value={participant.address}>
+                    {participant.name || displayName(participant.address)} · {shortAddress(participant.address)}
+                  </option>
+                ))}
+              </select>
+            )}
+            {directory?.unavailable && <p className="text-sm text-muted">The recipient directory is unavailable.</p>}
+            {directory && !directory.unavailable && !directory.recipients.length &&
+              <p className="text-sm text-muted">No eligible recipients found for this wallet.</p>}
+            <button type="button" className="btn btn-outline mt-1" disabled={loading} onClick={() => {
+              setManual(!manual);
+              setForm(prev => ({ ...prev, toAddress: '' }));
+            }}>{manual ? 'Choose from directory' : 'Enter wallet address'}</button>
           </div>
 
           <div className="form-group">

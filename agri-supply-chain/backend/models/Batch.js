@@ -50,7 +50,6 @@ const batchSchema = new mongoose.Schema({
 });
 
 // Indexes for faster queries
-batchSchema.index({ batchId: 1 });
 batchSchema.index({ currentCustodian: 1 });
 batchSchema.index({ currentStage: 1 });
 batchSchema.index({ cropType: 1 });

@@ -6,6 +6,11 @@ import Batch from './models/Batch.js';
 import Transfer from './models/Transfer.js';
 import Participant from './models/Participant.js';
 import Event from './models/Event.js';
+import { analyzeBatch } from './anomaly/analyzeBatch.js';
+import { assessRegistration } from './anomaly/assessRegistration.js';
+import onboarding from './onboarding/router.js';
+import anomalyReviews from './reviews/router.js';
+import { getPublicTrace } from './trace/publicTrace.js';
 
 dotenv.config();
 
@@ -25,6 +30,11 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes
+
+app.post('/api/batches/registration-assessment', assessRegistration);
+app.use('/api/onboarding/reviews', anomalyReviews);
+app.use('/api/onboarding', onboarding);
+app.get('/api/public/trace', getPublicTrace);
 
 // Get all batches with optional filters
 app.get('/api/batches', async (req, res) => {
@@ -62,6 +72,26 @@ app.get('/api/batches/:batchId', async (req, res) => {
   } catch (error) {
     console.error('Error fetching batch:', error);
     res.status(500).json({ error: 'Failed to fetch batch' });
+  }
+});
+
+app.get('/api/batches/:batchId/risk', async (req, res) => {
+  try {
+    const { batchId } = req.params;
+    const batch = await Batch.findOne({ batchId }).lean();
+    if (!batch) return res.status(404).json({ error: 'Batch is not indexed yet' });
+
+    const transfers = await Transfer.find({ batchId })
+      .sort({ blockNumber: 1, blockchainTimestamp: 1 }).lean();
+    const { registeredAt, transferCount } = req.query;
+    if ((registeredAt !== undefined && registeredAt !== String(batch.blockchainCreatedAt?.getTime() / 1000)) ||
+        (transferCount !== undefined && transferCount !== String(transfers.length))) {
+      return res.status(409).json({ error: 'Indexed history differs from the on-chain trace' });
+    }
+    res.json({ batchId, ...analyzeBatch(batch, transfers) });
+  } catch (error) {
+    console.error('Error analyzing batch:', error);
+    res.status(500).json({ error: 'Failed to analyze batch' });
   }
 });
 
